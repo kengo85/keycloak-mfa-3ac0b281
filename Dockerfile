@@ -1,29 +1,32 @@
-FROM quay.io/keycloak/keycloak:24.0
+# ---- Build stage: pre-compile the optimized Keycloak distribution ----
+FROM quay.io/keycloak/keycloak:26.7.0 AS builder
 
-USER root
+ENV KC_DB=postgres
+ENV KC_HEALTH_ENABLED=true
+ENV KC_METRICS_ENABLED=true
 
-RUN rpm -q gettext || (dnf install -y gettext && dnf clean all) || (microdnf install -y gettext && microdnf clean all) || true
+WORKDIR /opt/keycloak
+RUN /opt/keycloak/bin/kc.sh build
 
+# ---- Runtime stage ----
+FROM quay.io/keycloak/keycloak:26.7.0
+
+COPY --from=builder /opt/keycloak/ /opt/keycloak/
 COPY realm-export.json /opt/keycloak/data/import/realm-export.json
 COPY docker-entrypoint.sh /opt/keycloak/bin/docker-entrypoint.sh
 
+USER root
 RUN chmod +x /opt/keycloak/bin/docker-entrypoint.sh
-
 USER keycloak
 
-ENV KC_HTTP_PORT=80
-ENV KC_HOSTNAME_STRICT=false
-ENV KC_HOSTNAME_STRICT_HTTPS=false
-ENV KC_HTTP_ENABLED=true
-ENV KC_PROXY=edge
-ENV KC_HEALTH_ENABLED=true
-ENV KC_METRICS_ENABLED=true
-ENV KC_LOG_LEVEL=INFO
-ENV KEYCLOAK_ADMIN=admin
-ENV KEYCLOAK_ADMIN_PASSWORD=admin
+# 8080: application traffic (put a TLS-terminating reverse proxy/load balancer in front)
+# 9000: management interface (/health, /health/ready, /health/live, /metrics)
+EXPOSE 8080 9000
 
-RUN /opt/keycloak/bin/kc.sh build
-
-EXPOSE 80
+# The base image ships without curl/wget, so probe the management port with bash's /dev/tcp.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
+  CMD bash -c '(exec 3<>/dev/tcp/127.0.0.1/9000) 2>/dev/null && \
+    printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && \
+    grep -q "\"status\": \"UP\"" <&3' || exit 1
 
 ENTRYPOINT ["/opt/keycloak/bin/docker-entrypoint.sh"]

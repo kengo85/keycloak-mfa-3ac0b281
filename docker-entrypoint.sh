@@ -1,36 +1,35 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-KEYCLOAK_DIR="/opt/keycloak"
-REALM_EXPORT="/opt/keycloak/data/import/realm-export.json"
+MODE="${KC_MODE:-prod}"
 
 echo "========================================="
-echo " Starting Keycloak MFA Server"
+echo " Keycloak MFA Identity Provider"
+echo " Mode: ${MODE}"
 echo "========================================="
 
-# 環境変数のデフォルト設定
-export KEYCLOAK_ADMIN="${KEYCLOAK_ADMIN:-admin}"
-export KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin1234}"
-
-echo "[INFO] Keycloak Admin User: ${KEYCLOAK_ADMIN}"
-echo "[INFO] HTTP Port: 80"
-
-# realm-export.jsonが存在する場合はインポートフラグを設定
-IMPORT_ARGS=""
-if [ -f "${REALM_EXPORT}" ]; then
-    echo "[INFO] Found realm-export.json. Realm will be imported on startup."
-    IMPORT_ARGS="--import-realm"
-else
-    echo "[WARN] realm-export.json not found at ${REALM_EXPORT}. Skipping realm import."
+if [ "${MODE}" = "dev" ]; then
+  echo "[WARN] Dev mode: ephemeral in-memory DB, no hostname/TLS enforcement."
+  echo "[WARN] Do NOT use this mode for anything reachable by real users."
+  exec /opt/keycloak/bin/kc.sh start-dev --http-port="${KC_HTTP_PORT:-8080}" --import-realm
 fi
 
-echo "[INFO] Launching Keycloak in start-dev mode..."
-echo "========================================="
+required_vars="KC_HOSTNAME KC_DB_URL KC_DB_USERNAME KC_DB_PASSWORD KC_BOOTSTRAP_ADMIN_USERNAME KC_BOOTSTRAP_ADMIN_PASSWORD"
+missing=""
+for v in ${required_vars}; do
+  if [ -z "${!v:-}" ]; then
+    missing="${missing} ${v}"
+  fi
+done
 
-exec "${KEYCLOAK_DIR}/bin/kc.sh" start-dev \
-    --http-port=80 \
-    --http-enabled=true \
-    --hostname-strict=false \
-    --hostname-strict-https=false \
-    --log-level=INFO \
-    ${IMPORT_ARGS}
+if [ -n "${missing}" ]; then
+  echo "[ERROR] Missing required environment variables for production mode:${missing}"
+  echo "[ERROR] Set KC_MODE=dev for a local/ephemeral instance instead."
+  exit 1
+fi
+
+echo "[INFO] Hostname : ${KC_HOSTNAME}"
+echo "[INFO] Database : ${KC_DB_URL}"
+echo "[INFO] Realm import: /opt/keycloak/data/import/realm-export.json"
+
+exec /opt/keycloak/bin/kc.sh start --optimized --import-realm
