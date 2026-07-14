@@ -24,8 +24,10 @@ USER keycloak
 EXPOSE 8080 9000
 
 # The base image ships without curl/wget, so probe the management port with bash's /dev/tcp.
+# Note: `exec 3<>...` must run in the current shell, not a `(...)` subshell, or fd 3 closes
+# again as soon as the subshell exits and the following `>&3` fails with "Bad file descriptor".
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
-  CMD bash -c '(exec 3<>/dev/tcp/127.0.0.1/9000) 2>/dev/null && \
+  CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000 && \
     printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && \
     grep -q "\"status\": \"UP\"" <&3' || exit 1
 

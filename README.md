@@ -64,14 +64,17 @@ docker compose up -d --build
 
 PostgreSQLへのデータ永続化、ブートストラップ管理者アカウントの作成、レルムインポートが自動的に行われます。
 
-### 3. 前段にTLS終端のリバースプロキシ/ロードバランサを配置する
+### 3. TLS終端はCoolifyのTraefikに任せる
 
-このコンテナ自体はHTTP（8080番）で待ち受けます。本番では以下のいずれかが必須です。
+`docker-compose.yml`の`keycloak`サービスは**ホストへポートを公開しません**（`ports`セクションなし）。デプロイ先はCoolifyを想定しており、CoolifyのTraefikがCoolify管理下のDockerネットワーク経由でコンテナの8080番（`Dockerfile`の`EXPOSE 8080`）に直接到達し、TLS終端・ルーティングを行います。
 
-- **推奨**: nginx/ALB/Cloud Load Balancing等でTLSを終端し、`X-Forwarded-*`ヘッダーを付けてこのコンテナへプロキシする（`docker-compose.yml`は`KC_PROXY_HEADERS=xforwarded`を前提にしています）
-- Keycloak自身でTLSを終端したい場合は`KC_HTTPS_CERTIFICATE_FILE` / `KC_HTTPS_CERTIFICATE_KEY_FILE`を設定し、`KC_PROXY_HEADERS`は外さずリバースプロキシなし構成に合わせて調整してください
+- Coolify側のアプリ設定で公開ポートとして`8080`を指定し、`KC_HOSTNAME`と同じドメインをTraefikのルーティング先として設定してください
+- `KC_PROXY_HEADERS=xforwarded`のままにしておけば、Traefikが付与する`X-Forwarded-*`ヘッダーをKeycloakが信頼します
+- 管理ポート（9000、health/metrics）もホストには公開されません。コンテナのヘルス状態は`Dockerfile`に組み込み済みのDocker `HEALTHCHECK`がコンテナ内部から9000番を叩いて判定します（`docker ps`の`STATUS`列やCoolifyのヘルスチェック表示で確認できます）。TraefikやCoolifyから9000番へ到達させる設定は不要です
 
-> ⚠️ `KC_PROXY_HEADERS=xforwarded`を設定した状態でリバースプロキシを置かずに直接インターネットへ公開すると、クライアントが`X-Forwarded-*`ヘッダーを偽装できてしまいます。必ずヘッダーを上書きするリバースプロキシを前段に置いてください。
+> ⚠️ ポートを公開しないため、この`docker-compose.yml`単体を素の`docker compose up`でローカル実行してもホストマシンからは到達できません。ローカルで素早く動作確認したい場合は上記の「クイックスタート（開発モード）」（`docker run -p 8080:8080 -e KC_MODE=dev`）を使ってください。
+
+> ⚠️ 万一Coolify/Traefikを介さず直接インターネットに公開する構成に変える場合は、`KC_PROXY_HEADERS=xforwarded`のままだとクライアントが`X-Forwarded-*`ヘッダーを偽装できてしまいます。その際は必ずヘッダーを上書きするリバースプロキシを前段に置くか、この設定を見直してください。
 
 ---
 
@@ -150,7 +153,8 @@ http://<内部アドレス>:9000/metrics
 
 - [x] `start`（本番モード）を使用（`KC_MODE`未指定時のデフォルト）
 - [x] 外部PostgreSQLへの永続化（`docker-compose.yml`）
-- [ ] TLS終端（リバースプロキシ or Keycloak自身）を実際に構成する
+- [x] ホストへのポート公開なし（`keycloak`サービスに`ports`セクションを持たない。CoolifyのTraefikが内部Dockerネットワーク経由で8080番へ到達する構成）
+- [ ] CoolifyのアプリでTraefikの公開ポートを`8080`に設定し、`KC_HOSTNAME`と同じドメインをルーティング先にする
 - [ ] `KC_HOSTNAME`を実ドメインに設定する
 - [ ] ブートストラップ管理者を無効化し、個別の管理者アカウントに切り替える
 - [ ] `external-rp`クライアントのredirect URI / secretを実際の連携先に合わせて更新する
